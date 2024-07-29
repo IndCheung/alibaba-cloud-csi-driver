@@ -1,5 +1,5 @@
-//go:build linux
-// +build linux
+//go:build windows
+// +build windows
 
 /*
 Copyright 2019 The Kubernetes Authors.
@@ -46,6 +46,7 @@ import (
     "github.com/kubernetes-sigs/alibaba-cloud-csi-driver/pkg/options"
     log "github.com/sirupsen/logrus"
     "golang.org/x/sys/unix"
+    "golang.org/x/sys/windows"
     v1 "k8s.io/api/core/v1"
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     "k8s.io/client-go/kubernetes"
@@ -904,15 +905,53 @@ func GetNvmeDeviceByVolumeID(volumeID string) (device string, err error) {
 
 // Differs from os.WriteFile in that it does not or create file before writing.
 // Intended to write Linux virtual files: sysfs, cgroupfs, etc.
-func WriteTrunc(dirFd int, filePath string, value string) error {
-    fd, err := unix.Openat(dirFd, filePath, os.O_WRONLY|os.O_TRUNC, 0644)
+func WriteTrunc(dirFd windows.Handle, filePath string, value string) error {
+    //fd, err := unix.Openat(dirFd, filePath, os.O_WRONLY|os.O_TRUNC, 0644)
+    //if err != nil {
+    //    return err
+    //}
+    //
+    //_, err = unix.Write(fd, []byte(value))
+    //if err1 := unix.Close(fd); err1 != nil && err == nil {
+    //    err = err1
+    //}
+    //return err
+    // Use syscall to open the file with write-only access and truncate it if it exists.
+    // Convert the file path to a UTF-16 pointer
+    pathPtr, err := windows.UTF16PtrFromString(filePath)
     if err != nil {
         return err
     }
 
-    _, err = unix.Write(fd, []byte(value))
-    if err1 := unix.Close(fd); err1 != nil && err == nil {
-        err = err1
+    // Open the file for writing and truncate it if it exists
+    handle, err := windows.CreateFile(
+        pathPtr,
+        windows.GENERIC_WRITE,
+        windows.FILE_SHARE_WRITE,
+        nil,
+        windows.TRUNCATE_EXISTING,
+        windows.FILE_ATTRIBUTE_NORMAL,
+        0,
+    )
+    if err != nil {
+        return err
     }
-    return err
+    defer windows.CloseHandle(handle)
+
+    // Convert string value to a UTF-16 byte slice and then to little-endian byte order
+    data := []byte(value)
+
+    // Write the byte slice to the file
+    var written uint32
+    err = windows.WriteFile(handle, data, &written, nil)
+    if err != nil {
+        return err
+    }
+
+    // Verify that the number of bytes written matches the number of bytes to write
+    if written != uint32(len(data)) {
+        return windows.ERROR_WRITE_FAULT
+    }
+
+    return nil
 }

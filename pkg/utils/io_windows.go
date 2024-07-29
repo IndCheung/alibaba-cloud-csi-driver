@@ -1,5 +1,5 @@
-//go:build linux
-// +build linux
+//go:build windows
+// +build windows
 
 package utils
 
@@ -14,8 +14,10 @@ import (
 
     "github.com/container-storage-interface/spec/lib/go/csi"
     log "github.com/sirupsen/logrus"
-    "golang.org/x/sys/unix"
+    "golang.org/x/sys/windows"
 )
+
+type Handle uintptr
 
 const PodBlkIOCgroupPath = "/host/sys/fs/cgroup/blkio/kubepods.slice"
 
@@ -77,23 +79,23 @@ func SetVolumeIOLimit(devicePath string, req *csi.NodePublishVolumeRequest) erro
     }
     // /sys/fs/cgroup/blkio/kubepods.slice/kubepods-besteffort.slice/kubepods-besteffort-podaadcc749_6776_4933_990d_d50f260f5d46.slice/blkio.throttle.write_bps_device
     podUID = strings.ReplaceAll(podUID, "-", "_")
-    podBlkIOPathFd := -1
+    var podBlkIOPathFd windows.Handle
     for _, p := range []string{
         fmt.Sprintf("%s/kubepods-besteffort.slice/kubepods-besteffort-pod%s.slice", PodBlkIOCgroupPath, podUID),
         fmt.Sprintf("%s/kubepods-burstable.slice/kubepods-burstable-pod%s.slice", PodBlkIOCgroupPath, podUID),
         fmt.Sprintf("%s/kubepods-pod%s.slice", PodBlkIOCgroupPath, podUID),
     } {
-        fd, err := unix.Open(p, flag_O_PATH, 0)
+        fd, err := windows.Open(p, windows.OPEN_EXISTING, 0)
         if err == nil {
             podBlkIOPathFd = fd
-            defer unix.Close(podBlkIOPathFd)
+            defer windows.Close(podBlkIOPathFd)
             break
         }
         if !errors.Is(err, fs.ErrNotExist) {
             return fmt.Errorf("Volume(%s) Cannot open pod blkio path: %w", req.VolumeId, err)
         }
     }
-    if podBlkIOPathFd == -1 {
+    if podBlkIOPathFd == windows.InvalidHandle {
         log.Errorf("Volume(%s), pod blkio/cgroup path not found", req.VolumeId)
         return errors.New("pod blkio/cgroup path not found")
     }
@@ -127,7 +129,7 @@ func SetVolumeIOLimit(devicePath string, req *csi.NodePublishVolumeRequest) erro
     return nil
 }
 
-func writeIoLimit(majMinNum string, podBlkIOPathFd int, ioFile string, ioLimit int) error {
+func writeIoLimit(majMinNum string, podBlkIOPathFd windows.Handle, ioFile string, ioLimit int) error {
     content := majMinNum + " " + strconv.Itoa(ioLimit)
     return WriteTrunc(podBlkIOPathFd, ioFile, content)
 }
